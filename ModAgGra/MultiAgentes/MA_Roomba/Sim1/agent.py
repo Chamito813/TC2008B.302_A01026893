@@ -1,5 +1,5 @@
 from mesa import Agent
-
+import networkx as nx
 
 class RoombaAgent(Agent):
     """
@@ -21,6 +21,7 @@ class RoombaAgent(Agent):
         self.visited_positions = [(1, 1)]  
         self.battery = 100
         self.charging = False 
+        self.path_to_charging_station = []
 
     def move(self):
         """ 
@@ -37,7 +38,7 @@ class RoombaAgent(Agent):
         dirt_positions = [p for p, contents in neighbors if any(isinstance(agent, DirtAgent) for agent in contents)]
         
         #print(dirt_positions)
-        if self.battery > 20:
+        if self.battery > 20 and self.charging == False:
             if not dirt_positions:  # Si no hay suciedad, mueve aleatoriamente pero considerando aquellas posiciones que ya han sido visitadas
                 free_spaces = [p for p in possible_steps if self.model.grid.is_cell_empty(p) and p not in self.visited_positions]
                 if free_spaces:
@@ -68,6 +69,35 @@ class RoombaAgent(Agent):
                 self.model.grid.remove_agent(dirt_agent)
                 self.battery -= 2
                 print(self.battery)
+        else:
+            charging_stations = self.model.grid.get_cell_list_contents([agent.pos for agent in self.model.schedule.agents if isinstance(agent, ChargingStationAgent)])
+            if charging_stations:
+                charging_station = charging_stations[0]
+                print(charging_station.pos)
+                if charging_station.pos != self.pos:
+                    if not self.path_to_charging_station:
+                        self.path_to_charging_station = a_star_path_visited_cells(self.visited_positions, self.pos, charging_station.pos)
+                        print(self.path_to_charging_station)
+                    if self.path_to_charging_station:
+                        next_move = self.path_to_charging_station.pop(0)  # Saca el primer elemento de la lista
+                        self.model.grid.move_agent(self, next_move)
+                        print(f"Moving to charging station: {next_move}")
+                        self.battery -= 1  # Costo de movimiento
+                        print(self.battery)
+                        self.steps_taken += 1
+                elif charging_station.pos == self.pos and self.battery < 100:
+                    self.battery += 5
+                    print(f"Batería cargandose: {self.battery}%")
+                    self.model.grid.move_agent(self, charging_station.pos)
+                    self.charging = True
+                else:
+                    # La batería está llena, regresa a la lógica para moverse aleatoriamente
+                    print("Battery full")
+                    self.path_to_charging_station = []  # Reinicia el camino a la estación
+                    self.charging = False  # Marca que ha dejado de cargar
+            else:
+                # Lógica para moverse aleatoriamente cuando no hay estación de carga
+                pass
 
     def step(self):
         """ 
@@ -109,3 +139,24 @@ class ChargingStationAgent(Agent):
 
     def step(self):
         pass
+    
+def a_star_path_visited_cells(visited_positions, start, goal):
+    G = nx.Graph()
+
+    # Agrega nodos al grafo para las celdas visitadas
+    for node in visited_positions:
+        G.add_node(node)
+
+    # Agrega aristas al grafo para conexiones entre celdas vecinas
+    for node in visited_positions:
+        neighbors = [(x, y) for x in range(node[0] - 1, node[0] + 2) for y in range(node[1] - 1, node[1] + 2) if (x, y) in visited_positions]
+        G.add_edges_from([(node, neighbor) for neighbor in neighbors])
+        
+    print(G)   
+
+    # Usa el algoritmo A* para encontrar el camino más corto
+    try:
+        path = nx.astar_path(G, start, goal)
+        return path
+    except nx.NetworkXNoPath:
+        return None
